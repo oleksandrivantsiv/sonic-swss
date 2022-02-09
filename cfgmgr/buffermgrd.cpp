@@ -3,6 +3,7 @@
 #include <vector>
 #include <signal.h>
 #include <mutex>
+#include <memory>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -161,7 +162,7 @@ int main(int argc, char **argv)
 
     try
     {
-        std::vector<Orch *> cfgOrchList;
+        std::vector<std::shared_ptr<Orch>> cfgOrchList;
         bool dynamicMode = false;
         shared_ptr<vector<KeyOpFieldsValuesTuple>> asic_table_ptr = nullptr;
         shared_ptr<vector<KeyOpFieldsValuesTuple>> peripherial_table_ptr = nullptr;
@@ -215,7 +216,7 @@ int main(int argc, char **argv)
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
                 TableConnector(&stateDb, STATE_PORT_TABLE_NAME)
             };
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
+            cfgOrchList.emplace_back(std::make_shared<BufferMgrDynamic>(&cfgDb, &stateDb, &applDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
         }
         else if (!pg_lookup_file.empty())
         {
@@ -230,7 +231,7 @@ int main(int argc, char **argv)
                 CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME,
                 CFG_DEVICE_METADATA_TABLE_NAME
             };
-            cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables));
+            cfgOrchList.emplace_back(std::make_shared<BufferMgr>(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables));
         }
         else
         {
@@ -241,7 +242,7 @@ int main(int argc, char **argv)
         auto buffmgr = cfgOrchList[0];
 
         swss::Select s;
-        for (Orch *o : cfgOrchList)
+        for (auto o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
