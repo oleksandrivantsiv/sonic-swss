@@ -22,6 +22,8 @@ public:
 
     bool isNeighRestoreDone();
 
+    virtual ~NbrMgr();
+
 private:
     bool isIntfStateOk(const std::string &alias);
     bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);

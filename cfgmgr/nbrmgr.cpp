@@ -81,6 +81,14 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     }
 }
 
+NbrMgr::~NbrMgr()
+{
+    if (m_nl_sock)
+    {
+        nl_socket_free(m_nl_sock);
+    }
+}
+
 bool NbrMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
