@@ -57,6 +57,19 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
+RouteSync::~RouteSync()
+{
+    if (m_link_cache)
+    {
+        nl_cache_free(m_link_cache);
+    }
+
+    if (m_nl_sock)
+    {
+        nl_socket_free(m_nl_sock);
+    }
+}
+
 char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
 {
     char *ptr = buf;
