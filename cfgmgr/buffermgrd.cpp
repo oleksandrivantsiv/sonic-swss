@@ -123,6 +123,16 @@ void sigterm_handler(int signo)
 }
 #endif
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 int main(int argc, char **argv)
 {
     int opt;
@@ -142,6 +152,8 @@ int main(int argc, char **argv)
         exit(1);
     }
 #endif
+
+    use_ptr(alloc());
 
     while ((opt = getopt(argc, argv, "l:a:p:z:h")) != -1 )
     {

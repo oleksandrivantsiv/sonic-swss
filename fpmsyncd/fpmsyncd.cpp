@@ -57,6 +57,16 @@ void sigterm_handler(int signo)
 }
 #endif
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
@@ -68,6 +78,8 @@ int main(int argc, char **argv)
         exit(1);
     }
 #endif
+
+    use_ptr(alloc());
 
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
@@ -90,7 +102,7 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
-           
+
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.

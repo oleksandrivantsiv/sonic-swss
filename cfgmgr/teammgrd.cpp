@@ -37,6 +37,16 @@ void sig_handler(int signo)
     return;
 }
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("teammgrd");
@@ -46,6 +56,8 @@ int main(int argc, char **argv)
 
     /* Register the signal handler for SIGTERM */
     signal(SIGTERM, sig_handler);
+
+    use_ptr(alloc());
 
     try
     {

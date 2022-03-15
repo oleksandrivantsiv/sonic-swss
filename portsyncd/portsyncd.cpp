@@ -49,6 +49,16 @@ void sigterm_handler(int signo)
 }
 #endif
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 void usage()
 {
     cout << "Usage: portsyncd" << endl;
@@ -99,6 +109,8 @@ int main(int argc, char **argv)
     WarmStart::initialize("portsyncd", "swss");
     WarmStart::checkWarmStart("portsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
+
+    use_ptr(alloc());
 
     try
     {

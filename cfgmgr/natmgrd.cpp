@@ -110,12 +110,24 @@ void sigterm_handler(int signo)
     raise(signo);
 }
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("natmgrd");
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting natmgrd ---");
+
+    use_ptr(alloc());
 
     try
     {

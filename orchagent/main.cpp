@@ -128,6 +128,16 @@ void sigterm_handler(int signo)
 }
 #endif
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 void syncd_apply_view()
 {
     SWSS_LOG_NOTICE("Notify syncd APPLY_VIEW");
@@ -340,6 +350,8 @@ int main(int argc, char **argv)
         exit(1);
     }
 #endif
+
+    use_ptr(alloc());
 
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");

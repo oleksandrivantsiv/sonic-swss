@@ -52,6 +52,16 @@ void sigterm_handler(int signo)
 }
 #endif
 
+void *alloc()
+{
+    return malloc(1000);
+}
+
+void use_ptr(void *ptr)
+{
+    memset(ptr, 0, 1000);
+}
+
 bool handleGearboxConfigFile(string file, bool warm);
 bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
 
@@ -76,6 +86,8 @@ int main(int argc, char **argv)
         exit(1);
     }
 #endif
+
+    use_ptr(alloc());
 
     int opt;
     string gearbox_config_file;
@@ -108,12 +120,12 @@ int main(int argc, char **argv)
 
     try
     {
-        if (utils.platformHasGearbox() == false) 
+        if (utils.platformHasGearbox() == false)
         {
           // no gearbox, move on
 
           notifyGearboxConfigDone(producerStateTable, true);
-        } 
+        }
         else if (!handleGearboxConfigFromConfigDB(producerStateTable, cfgDb, warm))
         {
             // if gearbox config is missing in ConfigDB
