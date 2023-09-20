@@ -106,21 +106,19 @@ public:
 
 private:
     void init(DashAclGroup& group);
-    sai_status_t create(DashAclGroup& group);
-    sai_status_t remove(DashAclGroup& group);
+    void create(DashAclGroup& group);
+    void remove(DashAclGroup& group);
 
-    sai_status_t createRule(DashAclGroup& group, DashAclRule& rule);
-    sai_status_t removeRule(DashAclGroup& group, DashAclRule& rule);
+    void createRule(DashAclGroup& group, DashAclRule& rule);
+    void removeRule(DashAclGroup& group, DashAclRule& rule);
 
-    sai_status_t bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
-    sai_status_t unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
+    void bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
+    void unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
     bool isBound(const std::string &group_id);
     bool isBound(const DashAclGroup& group);
-    task_process_status attachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
-    task_process_status detachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
+    void attachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
+    void detachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
 
-    task_process_status refreshAclGroupFull(
-        const std::string &group_id);
-    task_process_status removeAclGroupFull(
-        DashAclGroup& group);
+    void refreshAclGroupFull(const std::string &group_id);
+    void removeAclGroupFull(DashAclGroup& group);
 };

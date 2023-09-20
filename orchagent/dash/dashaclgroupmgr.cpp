@@ -144,7 +144,7 @@ void DashAclGroupMgr::init(DashAclGroup& group)
     }
 }
 
-sai_status_t DashAclGroupMgr::create(DashAclGroup& group)
+void DashAclGroupMgr::create(DashAclGroup& group)
 {
     SWSS_LOG_ENTER();
 
@@ -157,14 +157,13 @@ sai_status_t DashAclGroupMgr::create(DashAclGroup& group)
     auto status = sai_dash_acl_api->create_dash_acl_group(&group.m_dash_acl_group_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to create ACL group: %d, %s", status, sai_serialize_status(status).c_str());
+        handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status);
     }
 
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
     gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
-
-    return status;
 }
 
 task_process_status DashAclGroupMgr::create(const string& group_id, DashAclGroup& group)
@@ -176,12 +175,7 @@ task_process_status DashAclGroupMgr::create(const string& group_id, DashAclGroup
         return task_failed;
     }
 
-    auto status = create(group);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create ACL group %s, rv: %s", group_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    create(group);
 
     m_groups_table.emplace(group_id, group);
 
@@ -190,19 +184,20 @@ task_process_status DashAclGroupMgr::create(const string& group_id, DashAclGroup
     return task_success;
 }
 
-sai_status_t DashAclGroupMgr::remove(DashAclGroup& group)
+void DashAclGroupMgr::remove(DashAclGroup& group)
 {
     SWSS_LOG_ENTER();
 
     if (group.m_dash_acl_group_id == SAI_NULL_OBJECT_ID)
     {
-        return SAI_STATUS_SUCCESS;
+        return;
     }
 
     sai_status_t status = sai_dash_acl_api->remove_dash_acl_group(group.m_dash_acl_group_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to remove ACL group: %d, %s", status, sai_serialize_status(status).c_str());
+        handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_ACL, status);
     }
 
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
@@ -210,8 +205,6 @@ sai_status_t DashAclGroupMgr::remove(DashAclGroup& group)
     gCrmOrch->decCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
 
     group.m_dash_acl_group_id = SAI_NULL_OBJECT_ID;
-
-    return status;
 }
 
 task_process_status DashAclGroupMgr::remove(const string& group_id)
@@ -239,12 +232,7 @@ task_process_status DashAclGroupMgr::remove(const string& group_id)
         return task_need_retry;
     }
 
-    auto status = remove(group);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove ACL group %s, rv: %s", group_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    remove(group);
 
     m_groups_table.erase(group_id);
     SWSS_LOG_INFO("Removed ACL group %s", group_id.c_str());
@@ -272,71 +260,41 @@ void DashAclGroupMgr::onUpdate(const string& group_id, const string& tag_id, con
     auto& group = group_it->second;
     if (isBound(group))
     {
+        // If the group is bound to at least one ENI refresh the full group to update the affected rules.
+        // When the group is bound to the ENI we need to make sure that the update of the affected rules will be atomic.
         SWSS_LOG_INFO("Update full ACL group %s", group_id.c_str());
 
         refreshAclGroupFull(group_id);
     }
     else
     {
+        // If the group is not bound to ENI update the rule immediately.
         SWSS_LOG_INFO("Update ACL group %s", group_id.c_str());
         for (auto& rule_it: group.m_dash_acl_rule_table)
         {
-            const auto& rule_id = rule_it.first;
             auto& rule = rule_it.second;
             if (rule.m_src_tags.find(tag_id) != rule.m_src_tags.end() || rule.m_dst_tags.find(tag_id) != rule.m_dst_tags.end())
             {
-                auto status = removeRule(group, rule);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_INFO("Failed to update ACL tag %s for ACL rule %s:%s, Failed to remove old rule, rv: %s", 
-                        tag_id.c_str(), group_id.c_str(), rule_id.c_str(), sai_serialize_status(status).c_str());
-                    continue;
-                }
-
-                status = createRule(group, rule);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_INFO("Failed to update ACL tag %s for ACL rule %s:%s, Failed to create  rule, rv: %s", 
-                        tag_id.c_str(), group_id.c_str(), rule_id.c_str(), sai_serialize_status(status).c_str());
-                    continue;
-                }
+                removeRule(group, rule);
+                createRule(group, rule);
             }
         }
     }
 }
 
-task_process_status DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
+void DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
 {
     SWSS_LOG_ENTER();
-
-    if (!exists(group_id))
-    {
-        return task_failed;
-    }
 
     auto& group = m_groups_table[group_id];
 
     DashAclGroup new_group = group;
     init(new_group);
-    auto status = create(new_group);
-    if (status != task_success)
-    {
-        SWSS_LOG_INFO("Failed to perform full ACL group update %s. Failed to create group, rv: %s", group_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    create(new_group);
 
     for (auto& rule: new_group.m_dash_acl_rule_table)
     {
-        const auto &rule_id = rule.first;
-        auto status = createRule(new_group, rule.second);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to perform full ACL group update %s. Failed to create DASH ACL rule %s, rv: %s", 
-                group_id.c_str(), rule_id.c_str(), sai_serialize_status(status).c_str());
-            
-            removeAclGroupFull(new_group);
-            return task_failed;
-        }
+        createRule(new_group, rule.second);
     }
 
     for (const auto& table: new_group.m_in_tables)
@@ -349,8 +307,7 @@ task_process_status DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
 
         for (const auto& stage: stages)
         {
-            auto status = bind(new_group, *eni, DashAclDirection::IN, stage);
-            ABORT_IF_NOT(status == SAI_STATUS_SUCCESS, "Failed to bind new group to ENI");
+            bind(new_group, *eni, DashAclDirection::IN, stage);
         }
     }
 
@@ -364,35 +321,28 @@ task_process_status DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
 
         for (const auto& stage: stages)
         {
-            auto status = bind(new_group, *eni, DashAclDirection::OUT, stage);
-            ABORT_IF_NOT(status == SAI_STATUS_SUCCESS, "Failed to bind new group to ENI");
+            bind(new_group, *eni, DashAclDirection::OUT, stage);
         }
     }
 
     removeAclGroupFull(group);
 
     group = new_group;
-
-    return task_success;
 }
 
-task_process_status DashAclGroupMgr::removeAclGroupFull(DashAclGroup& group)
+void DashAclGroupMgr::removeAclGroupFull(DashAclGroup& group)
 {
     SWSS_LOG_ENTER();
 
     for (auto& rule: group.m_dash_acl_rule_table)
     {
-        auto status = removeRule(group, rule.second);
-        ABORT_IF_NOT(status == SAI_STATUS_SUCCESS, "Failed to remove ACL rule");
+        removeRule(group, rule.second);
     }
 
-    auto rv = remove(group);
-    ABORT_IF_NOT(rv == SAI_STATUS_SUCCESS, "Failed to remove ACL group");
-
-    return task_success;
+    remove(group);
 }
 
-sai_status_t DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
+void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
 {
     SWSS_LOG_ENTER();
 
@@ -505,14 +455,13 @@ sai_status_t DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
     auto status = sai_dash_acl_api->create_dash_acl_rule(&rule.m_dash_acl_rule_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to create ACL rule: %d, %s", status, sai_serialize_status(status).c_str());
+        handleSaiCreateStatus((sai_api_t)SAI_API_DASH_ACL, status);
     }
 
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
             CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
     gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
-
-    return status;
 }
 
 task_process_status DashAclGroupMgr::createRule(const string& group_id, const string& rule_id, DashAclRule& rule)
@@ -530,12 +479,7 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     auto acl_rule_it = group.m_dash_acl_rule_table.find(rule_id);
     ABORT_IF_NOT(acl_rule_it == group.m_dash_acl_rule_table.end(), "Failed to create ACL rule %s. Rule already exist in ACL group %s", rule_id.c_str(), group_id.c_str());
 
-    auto status = createRule(group, rule);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create DASH ACL rule %s:%s, rv: %s", group_id.c_str(), rule_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    createRule(group, rule);
 
     group.m_dash_acl_rule_table.emplace(rule_id, rule);
     attachTags(group_id, rule.m_src_tags);
@@ -558,30 +502,29 @@ task_process_status DashAclGroupMgr::updateRule(const string& group_id, const st
 
     if (ruleExists(group_id, rule_id))
     {
-        auto rv = removeRule(group_id, rule_id);
-        if (rv != task_success)
-        {
-            return rv;
-        }
+        removeRule(group_id, rule_id);
     }
 
-    return createRule(group_id, rule_id, rule);
+    createRule(group_id, rule_id, rule);
+
+    return task_success;
 }
 
-sai_status_t DashAclGroupMgr::removeRule(DashAclGroup& group, DashAclRule& rule)
+void DashAclGroupMgr::removeRule(DashAclGroup& group, DashAclRule& rule)
 {
     SWSS_LOG_ENTER();
 
     if (rule.m_dash_acl_rule_id == SAI_NULL_OBJECT_ID)
     {
-        return task_success;
+        return;
     }
 
     // Remove the ACL group
-    sai_status_t status = sai_dash_acl_api->remove_dash_acl_rule(rule.m_dash_acl_rule_id);
+    auto status = sai_dash_acl_api->remove_dash_acl_rule(rule.m_dash_acl_rule_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to remove ACL rule: %d, %s", status, sai_serialize_status(status).c_str());
+        handleSaiRemoveStatus((sai_api_t)SAI_API_DASH_ACL, status);
     }
 
     CrmResourceType crm_resource = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
@@ -589,8 +532,6 @@ sai_status_t DashAclGroupMgr::removeRule(DashAclGroup& group, DashAclRule& rule)
     gCrmOrch->decCrmDashAclUsedCounter(crm_resource, group.m_dash_acl_group_id);
 
     rule.m_dash_acl_rule_id = SAI_NULL_OBJECT_ID;
-
-    return status;
 }
 
 task_process_status DashAclGroupMgr::removeRule(const string& group_id, const string& rule_id)
@@ -612,12 +553,7 @@ task_process_status DashAclGroupMgr::removeRule(const string& group_id, const st
 
     auto& rule = group.m_dash_acl_rule_table[rule_id];
 
-    auto status = removeRule(group, rule);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove dash ACL rule %s:%s, rv: %s", group_id.c_str(), rule_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    removeRule(group, rule);
 
     detachTags(group_id, rule.m_src_tags);
     detachTags(group_id, rule.m_dst_tags);
@@ -629,7 +565,7 @@ task_process_status DashAclGroupMgr::removeRule(const string& group_id, const st
     return task_success;
 }
 
-sai_status_t DashAclGroupMgr::bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage)
+void DashAclGroupMgr::bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage)
 {
     SWSS_LOG_ENTER();
 
@@ -638,13 +574,12 @@ sai_status_t DashAclGroupMgr::bind(const DashAclGroup& group, const EniEntry& en
     attr.id = getSaiStage(direction, group.m_ip_version, stage);
     attr.value.oid = group.m_dash_acl_group_id;
 
-    sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni.eni_id, &attr);
+    auto status = sai_dash_eni_api->set_eni_attribute(eni.eni_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to bind ACL group to ENI: %d", status);
+        handleSaiSetStatus((sai_api_t)SAI_API_DASH_ENI, status);
     }
-
-    return status;
 }
 
 bool DashAclGroupMgr::ruleExists(const string& group_id, const string& rule_id) const
@@ -686,12 +621,7 @@ task_process_status DashAclGroupMgr::bind(const string& group_id, const string& 
         return task_need_retry;
     }
 
-    auto status = bind(group, *eni, direction, stage);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to bind ACL group %s to ENI %s, status : %s", group_id.c_str(), eni_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    bind(group, *eni, direction, stage);
 
     auto& table = (direction == DashAclDirection::IN) ? group.m_in_tables : group.m_out_tables;
     auto& eni_stages = table[eni_id];
@@ -703,7 +633,7 @@ task_process_status DashAclGroupMgr::bind(const string& group_id, const string& 
     return task_success;
 }
 
-sai_status_t DashAclGroupMgr::unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage)
+void DashAclGroupMgr::unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage)
 {
     SWSS_LOG_ENTER();
 
@@ -712,13 +642,12 @@ sai_status_t DashAclGroupMgr::unbind(const DashAclGroup& group, const EniEntry& 
     attr.id = getSaiStage(direction, group.m_ip_version, stage);
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
-    sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni.eni_id, &attr);
+    auto status = sai_dash_eni_api->set_eni_attribute(eni.eni_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status;
+        SWSS_LOG_ERROR("Failed to unbind ACL group from ENI: %d", status);
+        handleSaiSetStatus((sai_api_t)SAI_API_DASH_ENI, status);
     }
-
-    return status;
 }
 
 task_process_status DashAclGroupMgr::unbind(const string& group_id, const string& eni_id, DashAclDirection direction, DashAclStage stage)
@@ -756,12 +685,7 @@ task_process_status DashAclGroupMgr::unbind(const string& group_id, const string
         return task_success;
     }
 
-    auto status = unbind(group, *eni_entry, direction, stage);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to unbind ACL group %s from ENI %s, status : %s", group_id.c_str(), eni_id.c_str(), sai_serialize_status(status).c_str());
-        return task_failed;
-    }
+    unbind(group, *eni_entry, direction, stage);
 
     eni_stages.erase(stage);
     if (eni_stages.empty())
@@ -791,7 +715,7 @@ bool DashAclGroupMgr::isBound(const DashAclGroup& group)
     return !group.m_in_tables.empty() || !group.m_out_tables.empty();
 }
 
-task_process_status DashAclGroupMgr::attachTags(const string &group_id, const unordered_set<string>& tags)
+void DashAclGroupMgr::attachTags(const string &group_id, const unordered_set<string>& tags)
 {
     SWSS_LOG_ENTER();
 
@@ -799,11 +723,9 @@ task_process_status DashAclGroupMgr::attachTags(const string &group_id, const un
     {
         m_dash_acl_orch->getDashAclTagMgr().attach(tag_id, group_id);
     }
-
-    return task_success;
 }
 
-task_process_status DashAclGroupMgr::detachTags(const string &group_id, const unordered_set<string>& tags)
+void DashAclGroupMgr::detachTags(const string &group_id, const unordered_set<string>& tags)
 {
     SWSS_LOG_ENTER();
 
@@ -811,6 +733,4 @@ task_process_status DashAclGroupMgr::detachTags(const string &group_id, const un
     {
         m_dash_acl_orch->getDashAclTagMgr().detach(tag_id, group_id);
     }
-
-    return task_success;
 }
